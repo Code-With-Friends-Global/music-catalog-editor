@@ -1,0 +1,16 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+RUN npm install -g pnpm
+
+COPY package.json pnpm-lock.yaml* ./
+RUN pnpm install --production
+
+COPY ai-server.js .
+
+ENV AI_SERVICE_PORT=3001
+
+EXPOSE 3001
+
+CMD ["node", "ai-server.js"]
