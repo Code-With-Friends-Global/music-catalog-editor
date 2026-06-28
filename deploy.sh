@@ -2,7 +2,22 @@
 
 set -e
 
-PROJECT_ID="${GCP_PROJECT_ID:-music-catalog-editor-project}"
+ENV_FILE="${ENV_FILE:-.env}"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+PROJECT_ID="${GCP_PROJECT_ID:-${GOOGLE_CLOUD_PROJECT:-}}"
+if [ -z "$PROJECT_ID" ]; then
+  PROJECT_ID="$(gcloud config get-value project 2>/dev/null || true)"
+fi
+if [ -z "$PROJECT_ID" ]; then
+  PROJECT_ID="music-catalog-editor-project"
+fi
+
 SERVICE_NAME="${SERVICE_NAME:-music-catalog-editor-api}"
 REGION="${REGION:-us-central1}"
 IMAGE_NAME="music-catalog-editor-api"
@@ -34,6 +49,15 @@ if ! command -v gcloud &> /dev/null; then
 fi
 
 ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+if [ -z "$ACTIVE_ACCOUNT" ]; then
+  echo -e "${YELLOW}No active gcloud account found. Attempting gcloud auth login...${NC}"
+  if ! gcloud auth login --no-launch-browser; then
+    echo -e "${RED}Error: gcloud auth login failed.${NC}"
+    exit 1
+  fi
+  ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+fi
+
 if [ -z "$ACTIVE_ACCOUNT" ]; then
   echo -e "${RED}Error: No active gcloud account. Run 'gcloud auth login'${NC}"
   exit 1
