@@ -5,7 +5,7 @@
  * No API keys are ever included in request bodies or headers from the client.
  */
 
-const AI_BASE_URL = 'https://pizza-api-x7ryikojna-uc.a.run.app';
+const AI_BASE_URL = 'http://localhost:3001';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
