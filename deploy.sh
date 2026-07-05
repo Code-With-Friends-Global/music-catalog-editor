@@ -26,6 +26,9 @@ SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-music-catalog-editor-sa}"
 SECRET_NAME="${SECRET_NAME:-gemini-service-account-key}"
 SECRET_ENV_VAR="${SECRET_ENV_VAR:-GOOGLE_SERVICE_ACCOUNT_KEY_JSON}"
 SECRET_FILE="${SECRET_FILE:-}"
+DEPLOY_GCLOUD_ACCOUNT="${DEPLOY_GCLOUD_ACCOUNT:-}"
+AI_BILLING_PROJECT="${GOOGLE_BILLING_PROJECT:-${AI_STUDIO_BILLING_PROJECT:-}}"
+AI_BILLING_ACCOUNT_EMAIL="${AI_BILLING_ACCOUNT_EMAIL:-${AI_STUDIO_ACCOUNT_EMAIL:-}}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -41,6 +44,9 @@ Image: $GCR_IMAGE
 Service Account: $SERVICE_ACCOUNT_NAME
 Secret Name: $SECRET_NAME
 Secret Env Var: $SECRET_ENV_VAR
+Deploy gcloud account: ${DEPLOY_GCLOUD_ACCOUNT:-<active account>}
+AI billing project: ${AI_BILLING_PROJECT:-<none>}
+AI billing account hint: ${AI_BILLING_ACCOUNT_EMAIL:-<none>}
 EOF
 
 if ! command -v gcloud &> /dev/null; then
@@ -53,6 +59,15 @@ if [ -z "$ACTIVE_ACCOUNT" ]; then
   echo -e "${YELLOW}No active gcloud account found. Attempting gcloud auth login...${NC}"
   if ! gcloud auth login --no-launch-browser; then
     echo -e "${RED}Error: gcloud auth login failed.${NC}"
+    exit 1
+  fi
+  ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+fi
+
+if [ -n "$DEPLOY_GCLOUD_ACCOUNT" ] && [ "$ACTIVE_ACCOUNT" != "$DEPLOY_GCLOUD_ACCOUNT" ]; then
+  echo -e "${YELLOW}Switching gcloud account to: $DEPLOY_GCLOUD_ACCOUNT${NC}"
+  if ! gcloud config set account "$DEPLOY_GCLOUD_ACCOUNT" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Account $DEPLOY_GCLOUD_ACCOUNT is not authenticated. Run: gcloud auth login $DEPLOY_GCLOUD_ACCOUNT${NC}"
     exit 1
   fi
   ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
@@ -107,10 +122,25 @@ if ! gcloud iam service-accounts describe "$SERVICE_ACCOUNT_EMAIL" --project "$P
   gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" --project "$PROJECT_ID" --display-name="Music Catalog Editor service account"
 fi
 
-for ROLE in roles/aiplatform.user roles/secretmanager.secretAccessor roles/iam.serviceAccountTokenCreator roles/generativeai.apiUser; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${SERVICE_ACCOUNT_EMAIL}" --role="$ROLE" --quiet || true
-  echo -e "${GREEN}✓ Granted $ROLE${NC}"
- done
+for ROLE in roles/aiplatform.user roles/secretmanager.secretAccessor roles/iam.serviceAccountTokenCreator; do
+  if gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${SERVICE_ACCOUNT_EMAIL}" --role="$ROLE" --quiet >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ Granted $ROLE${NC}"
+  else
+    echo -e "${YELLOW}Could not grant $ROLE on $PROJECT_ID${NC}"
+  fi
+done
+
+# Optional cross-project billing instrumentation for AI Studio prepaid usage.
+# This may fail when the current deploy account cannot administer the billing project.
+if [ -n "$AI_BILLING_PROJECT" ]; then
+  if gcloud projects add-iam-policy-binding "$AI_BILLING_PROJECT" --member="serviceAccount:${SERVICE_ACCOUNT_EMAIL}" --role="roles/serviceusage.serviceUsageConsumer" --quiet >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ Granted roles/serviceusage.serviceUsageConsumer on $AI_BILLING_PROJECT${NC}"
+  else
+    echo -e "${YELLOW}Could not grant roles/serviceusage.serviceUsageConsumer on $AI_BILLING_PROJECT${NC}"
+    echo -e "${YELLOW}Grant this role manually using an owner account (for example: $AI_BILLING_ACCOUNT_EMAIL).${NC}"
+    echo -e "${YELLOW}Manual command:${NC} gcloud projects add-iam-policy-binding $AI_BILLING_PROJECT --member=\"serviceAccount:${SERVICE_ACCOUNT_EMAIL}\" --role=\"roles/serviceusage.serviceUsageConsumer\" --account=${AI_BILLING_ACCOUNT_EMAIL}"
+  fi
+fi
 
 SECRET_EXISTS=false
 SECRET_BINDABLE=false
@@ -136,7 +166,7 @@ DEPLOY_CMD=(gcloud run deploy "$SERVICE_NAME" \
   --allow-unauthenticated \
   --port 3001 \
   --service-account "$SERVICE_ACCOUNT_EMAIL" \
-  --set-env-vars "GEMINI_MODEL=${GEMINI_MODEL:-gemini-flash},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,AI_SERVICE_PORT=3001")
+  --set-env-vars "GEMINI_MODEL=${GEMINI_MODEL:-gemini-flash},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,AI_SERVICE_PORT=3001,GOOGLE_BILLING_PROJECT=${AI_BILLING_PROJECT}")
 
 if [ "$SECRET_BINDABLE" = true ]; then
   DEPLOY_CMD+=(--set-secrets "$SECRET_ENV_VAR=${SECRET_NAME}:latest")

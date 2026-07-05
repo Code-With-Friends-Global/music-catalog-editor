@@ -13,18 +13,23 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleAuth, JWT } from 'google-auth-library';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { JWT } from 'google-auth-library';
+import { readFileSync } from 'node:fs';
 
 dotenv.config();
 
+const execFileAsync = promisify(execFile);
+
 const app = express();
 const PORT = process.env.AI_SERVICE_PORT || 3001;
-const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta2';
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_SCOPES = [
   'https://www.googleapis.com/auth/generative-language',
   'https://www.googleapis.com/auth/cloud-platform',
 ];
-const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || 'text-bison-001';
+const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
 
 app.use(
   cors({
@@ -57,8 +62,29 @@ async function getGoogleAuthHeaders() {
 
   const scopes = GEMINI_SCOPES;
 
-  if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY_JSON) {
-    const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_JSON);
+  let credentialsJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_JSON;
+  if (!credentialsJson && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    try {
+      credentialsJson = readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8');
+    } catch (err) {
+      console.warn('Unable to read GOOGLE_APPLICATION_CREDENTIALS:', err?.message ?? err);
+    }
+  }
+
+  if (!credentialsJson) {
+    const project = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const secretName = process.env.GOOGLE_SERVICE_ACCOUNT_SECRET_NAME || 'gemini-service-account-key';
+    const secretProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT_ID;
+    try {
+      const { stdout } = await execFileAsync('gcloud', ['secrets', 'versions', 'access', 'latest', '--secret=' + secretName, '--project=' + secretProject], { timeout: 60000 });
+      credentialsJson = stdout.trim();
+    } catch (err) {
+      console.warn('Unable to read service account credentials from Secret Manager:', err?.message ?? err);
+    }
+  }
+
+  if (credentialsJson) {
+    const credentials = JSON.parse(credentialsJson);
     const client = new JWT({
       email: credentials.client_email,
       key: credentials.private_key,
@@ -71,22 +97,26 @@ async function getGoogleAuthHeaders() {
       throw new Error('Failed to obtain Google Cloud access token from JWT client.');
     }
 
-    return { authorization: `Bearer ${token}` };
+    const billingProject = process.env.GOOGLE_BILLING_PROJECT || process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT_ID;
+    return { authorization: `Bearer ${token}`, project: billingProject };
   }
 
-  const auth = new GoogleAuth({ scopes });
-  let client = await auth.getClient();
-  if (typeof client.createScoped === 'function' && client.createScopedRequired && client.createScopedRequired()) {
-    client = client.createScoped(scopes);
+  try {
+    const project = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT_ID;
+    const args = ['auth', 'print-access-token'];
+    if (project) {
+      args.push('--project', project);
+    }
+    const { stdout } = await execFileAsync('gcloud', args, { timeout: 30000 });
+    const token = stdout.trim();
+    if (token) {
+      return { authorization: `Bearer ${token}`, project };
+    }
+  } catch (err) {
+    console.warn('gcloud CLI token fallback failed:', err?.message ?? err);
   }
 
-  const accessToken = await client.getAccessToken();
-  const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
-  if (!token) {
-    throw new Error('Failed to obtain Google Cloud access token.');
-  }
-
-  return { authorization: `Bearer ${token}` };
+  throw new Error('No Google authentication credentials were available. Set GOOGLE_API_KEY, GOOGLE_SERVICE_ACCOUNT_KEY_JSON, or run gcloud auth login/application-default login.');
 }
 
 function buildConversationPrompt(messages) {
@@ -115,16 +145,19 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     const authHeaders = await getGoogleAuthHeaders();
-    const modelsToTry = [DEFAULT_GEMINI_MODEL, 'text-bison-001', 'gemini-1.5', 'gemini-1.0'];
+      const modelsToTry = [DEFAULT_GEMINI_MODEL, 'gemini-flash-latest', 'gemini-2.0-flash-lite-001', 'gemini-2.0-flash-001'];
     let completion = null;
     let lastError = null;
 
     for (const model of modelsToTry) {
       try {
-        let url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateText`;
+        let url = `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
         const headers = { 'Content-Type': 'application/json' };
         if (authHeaders.authorization) {
           headers.Authorization = authHeaders.authorization;
+          if (authHeaders.project) {
+            headers['X-Goog-User-Project'] = authHeaders.project;
+          }
         }
         if (authHeaders.queryString) {
           url += authHeaders.queryString;
@@ -134,13 +167,26 @@ app.post('/api/chat', async (req, res) => {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            prompt: { text: promptText },
-            temperature: 0.7,
-            maxOutputTokens: 1024,
+            contents: [{ role: 'user', parts: [{ text: promptText }] }],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 1024,
+            },
           }),
         });
 
         const body = await response.json();
+        // If billing/prepay exhausted, return a safe canned reply so UI stays usable
+        const isBillingError = response.status === 429 || body?.error?.status === 'RESOURCE_EXHAUSTED' || (body?.error?.message && /prepayment credits|prepay|RESOURCE_EXHAUSTED/i.test(body.error.message));
+        if (isBillingError) {
+          const canned = {
+            candidates: [
+              { content: { parts: [{ text: 'The AI service is temporarily unavailable due to billing or quota limits. I can still help with basic questions: hello — how can I assist with your music catalog?' }] } },
+            ],
+          };
+          completion = canned;
+          break;
+        }
         if (!response.ok) {
           throw new Error(body.error?.message || JSON.stringify(body));
         }
@@ -160,7 +206,7 @@ app.post('/api/chat', async (req, res) => {
       return res.status(502).json({ error: lastError?.message || 'All Gemini model attempts failed' });
     }
 
-    const replyContent = completion.candidates[0]?.output ?? '';
+    const replyContent = completion.candidates?.[0]?.content?.parts?.map((part) => part.text).join('') ?? '';
     const { triggerGif, gifQuery } = detectGifTrigger(replyContent, messages);
     return res.json({ reply: replyContent, triggerGif, gifQuery });
   } catch (err) {
