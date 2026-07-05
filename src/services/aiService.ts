@@ -1,11 +1,11 @@
 /**
  * aiService.ts — client-side fetch wrapper for the Music Catalog AI service.
  *
- * All requests are proxied through the local AI server (localhost:3001).
+ * All requests are proxied through the public AI server unless overridden by Vite env.
  * No API keys are ever included in request bodies or headers from the client.
  */
 
-const AI_BASE_URL = 'http://localhost:3001';
+const AI_BASE_URL = import.meta.env.VITE_AI_BASE_URL || 'https://music-catalog-editor-api-x7ryikojna-uc.a.run.app';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';

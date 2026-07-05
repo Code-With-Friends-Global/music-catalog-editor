@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VITE_BASE_PATH: /music-catalog-editor/
+      VITE_AI_BASE_URL: https://music-catalog-editor-api-x7ryikojna-uc.a.run.app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
