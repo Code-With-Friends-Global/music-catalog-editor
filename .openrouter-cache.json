@@ -1,0 +1,56 @@
+{
+  "remainingBudget": 3693,
+  "prompts": {
+    "What is the meaning of life?": {
+      "cachedAt": "2026-07-19T21:46:03.133Z",
+      "tokensUsed": 259,
+      "maxTokens": 3952,
+      "response": {
+        "id": "gen-1784497561-CefcpxCKW6B6Nqn1xxcU",
+        "object": "chat.completion",
+        "created": 1784497561,
+        "model": "openai/gpt-4o",
+        "provider": "OpenAI",
+        "system_fingerprint": "fp_8772b5f549",
+        "service_tier": null,
+        "choices": [
+          {
+            "index": 0,
+            "logprobs": null,
+            "finish_reason": "stop",
+            "native_finish_reason": "stop",
+            "message": {
+              "role": "assistant",
+              "content": "The meaning of life is a profound question that has been contemplated by philosophers, theologians, scientists, and thinkers throughout history. Its interpretation varies widely depending on cultural, religious, spiritual, and personal perspectives. Some common viewpoints include:\n\n1. **Religious/Spiritual**: Many religions offer specific teachings about the purpose of life, often involving serving a deity, achieving enlightenment, or adhering to moral principles to achieve an afterlife or spiritual fulfillment.\n\n2. **Philosophical**: Philosophers have proposed various theories, from existentialism, which suggests that meaning is not inherent and must be created individually, to utilitarianism, which posits that meaning can be found in actions that maximize overall happiness.\n\n3. **Scientific**: From a scientific standpoint, life can be seen as a natural process of evolution, where the purpose might be simply to survive, reproduce, and pass on genetic material.\n\n4. **Personal**: On a personal level, individuals often find meaning through relationships, achievements, personal growth, creativity, and contributing to the well-being of others.\n\nUltimately, the meaning of life is subjective and can be a uniquely personal journey for each individual, shaped by their beliefs, experiences, and values.",
+              "refusal": null,
+              "reasoning": null
+            }
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 14,
+          "completion_tokens": 245,
+          "total_tokens": 259,
+          "cost": 0.002485,
+          "is_byok": false,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.002485,
+            "upstream_inference_prompt_cost": 0.000035,
+            "upstream_inference_completions_cost": 0.00245
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0,
+            "audio_tokens": 0
+          }
+        }
+      }
+    }
+  }
+}
